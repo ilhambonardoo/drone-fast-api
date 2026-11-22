@@ -1,0 +1,64 @@
+{
+  "model_name": "DreamPalm_CNN_720_AreaLuar",
+  "status": "prototype_exploratory",
+  "camera_training": "DJI Mavic 3 Multispectral",
+  "input_shape": [
+    720,
+    720,
+    3
+  ],
+  "source_tiff_band_order": [
+    "Green",
+    "Red",
+    "Red Edge",
+    "NIR"
+  ],
+  "cnn_band_indexes_1based": [
+    1,
+    2,
+    4
+  ],
+  "cnn_band_order": [
+    "Green",
+    "Red",
+    "NIR"
+  ],
+  "mean": [
+    0.026104019954800606,
+    0.01674496755003929,
+    0.21688738465309143
+  ],
+  "std": [
+    0.013087754137814045,
+    0.009530703537166119,
+    0.08941933512687683
+  ],
+  "clip_min": -5,
+  "clip_max": 5,
+  "invalid_pixel_fill": 0,
+  "mask": {
+    "type": "outside_circle",
+    "center_x": 359.5,
+    "center_y": 359.5,
+    "radius_pixels": 220,
+    "inside_value": 0,
+    "outside_value": 1
+  },
+  "threshold": 0.5,
+  "class_mapping": {
+    "0": "Sehat",
+    "1": "Terserang"
+  },
+  "seed": 42,
+  "epochs": 15,
+  "training_samples": 40,
+  "evaluation_reference": {
+    "experiment": 35,
+    "best_seed_cv_accuracy": 0.875,
+    "best_seed_cv_f1": 0.87179487,
+    "three_seed_mean_accuracy": 0.7833,
+    "three_seed_mean_f1": 0.7721,
+    "independent_validation": false
+  },
+  "automatic_spraying_allowed": false
+}
