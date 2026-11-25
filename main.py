@@ -1,11 +1,12 @@
 import os
-import re
 import json
 import cv2
 import numpy as np
 import tensorflow as tf
 from dotenv import load_dotenv
-from supabase import create_client, Client
+from pathlib import Path
+from uuid import uuid4
+import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -42,7 +43,7 @@ CNN_ZERO_MASK = ~CNN_KEEP_MASK
 
 app = FastAPI(
     title="DreamPalm MAPIR CNN & NDVI Processing API",
-    version="3.0"
+    version="3.1-local-storage"
 )
 
 app.add_middleware(
@@ -53,14 +54,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "snapshots")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("SUPABASE_URL dan SUPABASE_KEY harus diisi di file .env")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Hanya penyimpanan hasil analisis. JPG/RAW asli disimpan Next.js.
+STORAGE_ROOT = Path(os.getenv(
+    "DREAMPALM_STORAGE_ROOT", "/srv/dreampalm-storage/uji"
+)).resolve()
+MEDIA_BASE = os.getenv("DREAMPALM_MEDIA_BASE", "/api/media").rstrip("/")
 
 KERAS_MODEL_PATH = os.path.join(
     BASE_DIR,
@@ -80,47 +78,31 @@ except Exception as e:
     print(f"Gagal memuat model: {e}")
     cnn_classifier = None
 
-def sanitize_filename(filename: str) -> str:
-    name, ext = os.path.splitext(filename)
-    clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
-    return f"{clean_name}{ext}"
+def save_analysis_images(img_720, ndvi_colormap):
+    prediction_id = str(uuid4())
+    relative_dir = Path("predictions") / prediction_id
+    parent = STORAGE_ROOT / "predictions"
+    parent.mkdir(parents=True, exist_ok=True)
+    temp_dir = parent / f".{prediction_id}.tmp"
+    final_dir = STORAGE_ROOT / relative_dir
+    temp_dir.mkdir(mode=0o750)
+    try:
+        for name, ext, image, params in (
+            ("processed.jpg", ".jpg", img_720, [cv2.IMWRITE_JPEG_QUALITY, 85]),
+            ("ndvi.png", ".png", ndvi_colormap, []),
+        ):
+            ok, encoded = cv2.imencode(ext, image, params)
+            if not ok:
+                raise ValueError(f"Gagal melakukan enkoding {name}.")
+            (temp_dir / name).write_bytes(encoded.tobytes())
+        temp_dir.rename(final_dir)
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    processed_path = (relative_dir / "processed.jpg").as_posix()
+    ndvi_path = (relative_dir / "ndvi.png").as_posix()
+    return prediction_id, processed_path, ndvi_path
 
-
-def upload_np_image_to_supabase(img_np: np.ndarray, filename: str) -> str:
-    success, encoded_img = cv2.imencode(".png", img_np)
-    if not success:
-        raise ValueError("Gagal melakukan enkoding gambar PNG.")
-
-    supabase.storage.from_(SUPABASE_BUCKET).upload(
-        path=filename,
-        file=encoded_img.tobytes(),
-        file_options={"content-type": "image/png", "upsert": "true"},
-    )
-
-    return supabase.storage.from_(SUPABASE_BUCKET).get_public_url(filename)
-
-
-def upload_jpg_image_to_supabase(
-    img_np: np.ndarray,
-    filename: str,
-    quality: int = 85
-) -> str:
-    success, encoded_img = cv2.imencode(
-        ".jpg",
-        img_np,
-        [cv2.IMWRITE_JPEG_QUALITY, quality],
-    )
-
-    if not success:
-        raise ValueError("Gagal melakukan enkoding gambar JPEG.")
-
-    supabase.storage.from_(SUPABASE_BUCKET).upload(
-        path=filename,
-        file=encoded_img.tobytes(),
-        file_options={"content-type": "image/jpeg", "upsert": "true"},
-    )
-
-    return supabase.storage.from_(SUPABASE_BUCKET).get_public_url(filename)
 
 def prepare_mapir_patch(img_bgr: np.ndarray) -> np.ndarray:
     h, w, _ = img_bgr.shape
@@ -264,20 +246,6 @@ def process_drone_image(image_bytes: bytes, filename: str):
     if not valid.any():
         raise ValueError("Tidak ditemukan piksel valid.")
 
-    clean_name, _ = os.path.splitext(sanitize_filename(filename))
-    url_thumb = upload_jpg_image_to_supabase(
-        img_720,
-        f"{clean_name}_thumb.jpg",
-        quality=85,
-    )
-
-    ndvi_colormap = create_ndvi_heatmap(ndvi_matrix)
-
-    url_ndvi = upload_np_image_to_supabase(
-        ndvi_colormap,
-        f"{clean_name}_ndvi.png",
-    )
-
     if cnn_classifier is None:
         raise RuntimeError("Model CNN belum berhasil dimuat.")
 
@@ -305,8 +273,18 @@ def process_drone_image(image_bytes: bytes, filename: str):
         score_terserang if terserang else score_sehat
     )
 
+    ndvi_colormap = create_ndvi_heatmap(ndvi_matrix)
+    prediction_id, processed_path, ndvi_path = save_analysis_images(
+        img_720, ndvi_colormap
+    )
+    url_thumb = f"{MEDIA_BASE}/{processed_path}"
+    url_ndvi = f"{MEDIA_BASE}/{ndvi_path}"
+
     return {
         "success": True,
+        "predictionId": prediction_id,
+        "processedJpgPath": processed_path,
+        "ndviVisualPath": ndvi_path,
         "filename": filename,
         "modelName": MODEL_CONFIG["model_name"],
         "modelStatus": MODEL_CONFIG["status"],

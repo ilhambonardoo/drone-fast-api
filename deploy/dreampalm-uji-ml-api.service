@@ -1,0 +1,21 @@
+[Unit]
+Description=DreamPalm Uji ML FastAPI Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dreampalm
+Group=dreampalm
+WorkingDirectory=/srv/dreampalm-uji-ml-api
+Environment="DREAMPALM_STORAGE_ROOT=/srv/dreampalm-storage/uji"
+Environment="DREAMPALM_MEDIA_BASE=/api/media"
+Environment="TF_CPP_MIN_LOG_LEVEL=2"
+Environment="TF_ENABLE_ONEDNN_OPTS=0"
+UMask=0027
+ExecStart=/srv/dreampalm-ml-api/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8002 --workers 1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
